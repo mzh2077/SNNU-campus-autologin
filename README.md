@@ -69,6 +69,18 @@ Windows Defender 等）都会**默认拦截或提醒**。
 
 ## 一、直接使用（推荐）
 
+### 📥 下载
+
+> **国内网络建议走网盘，下载更快**
+>
+> 蓝奏云：https://wwavz.lanzout.com/itbug4blcs7e
+> 访问密码：**`am4z`**
+>
+> 也可前往 [Releases 页面](https://github.com/mzh2077/SNNU-campus-autologin/releases) 下载，
+> 两者为同一版本（SHA-256 一致）。
+
+### 使用
+
 1. 双击 `校园网自动登录.exe`
 2. 首次运行会引导你输入**账号**和**密码**，并选择你的网络运营商
 3. 接着会询问**是否设置开机自动启动**（默认「是」）
