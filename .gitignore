@@ -1,0 +1,29 @@
+# ---- 构建产物 ----
+build/
+dist/
+*.spec
+*.egg-info/
+
+# ---- Python 缓存 ----
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# ---- 图标生成产物（由 make_icon.py 生成，可复现）----
+icon.ico
+icon.png
+
+# ---- 本地配置与凭据（绝不可提交！）----
+settings.json
+credentials.bin
+*.log
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

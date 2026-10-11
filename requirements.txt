@@ -1,0 +1,14 @@
+# 校园网自动登录工具 —— 运行核心仅需 Python 标准库。
+#
+# 【Windows】密码加密使用系统自带的 DPAPI（ctypes 调用），无需任何第三方库。
+# cryptography 是**可选兜底**：仅当 DPAPI 不可用（如非 Windows 平台）时才需要，
+# 若未安装程序会自动降级为不加密并给出提示，不会崩溃。
+#
+# 以下为开发/打包用的可选依赖：
+#   cryptography —— AES 兜底加密（跨平台时需要）
+#   Pillow       —— 生成「师」字图标（仅生成图标/打包时需要）
+#   pyinstaller  —— 打包为 exe
+
+cryptography>=42.0
+Pillow>=10.0
+pyinstaller>=6.0
