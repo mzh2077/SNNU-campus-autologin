@@ -161,7 +161,7 @@
 ## 五、目录结构
 
 ```
-campus_autologin/
+SNNU-campus-autologin/
 ├── main.py               主程序：命令行交互、首次向导、设置菜单、结果展示
 ├── portal_client.py      网络层：请求门户、判定登录结果
 ├── config_store.py       凭据存储：DPAPI 加密，不存明文
@@ -171,6 +171,8 @@ campus_autologin/
 ├── make_icon.py          图标生成：绘制「师」字图标
 ├── icon.ico / icon.png   图标文件
 ├── build.py              打包脚本：生成 exe（自动应用图标）
+├── requirements.txt      可选依赖
+├── LICENSE               MIT 许可
 ├── README.md             本文档
 └── dist/
     ├── 校园网自动登录.exe  打包产物（双击运行）
@@ -351,8 +353,8 @@ A：确认已成功开启（运行 `--autostart-info` 查看状态）。
 ## 十二、从源码运行
 
 ```bash
-git clone <你的仓库地址>
-cd campus_autologin
+git clone https://github.com/你的用户名/SNNU-campus-autologin.git
+cd SNNU-campus-autologin
 
 # 直接运行（Windows 下核心功能零第三方依赖）
 python main.py
