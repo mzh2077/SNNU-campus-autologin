@@ -134,6 +134,33 @@ class PortalClient:
         return self.cfg.status_encoding
 
     # ------------------------------------------------------------------
+    # 网络就绪探测
+    # ------------------------------------------------------------------
+    def is_network_ready(self, timeout: float | None = None) -> bool:
+        """
+        探测是否已连上校园网（门户是否可达）。
+
+        开机后 WiFi/网线就绪往往需要几秒，此时门户不可达，
+        直接登录只会得到"校园网不可达"。本方法用于等待网络就绪。
+
+        与 check_status 的区别：不解析页面内容、不判断登录状态，
+        只关心"能不能连上门户"，因此不受在线状态影响。
+        """
+        saved = self.cfg.request_timeout
+        if timeout is not None:
+            self.cfg.request_timeout = timeout
+        try:
+            code, _ = self._open(self.cfg.status_url)
+            # 只要门户有响应（哪怕 403/404）就说明网络通了
+            return code < 600
+        except (TimeoutError, ConnectionError, OSError):
+            return False
+        except Exception:
+            return False
+        finally:
+            self.cfg.request_timeout = saved
+
+    # ------------------------------------------------------------------
     # 状态查询
     # ------------------------------------------------------------------
     def check_status(self, expect_account: str | None = None) -> tuple[str, dict]:

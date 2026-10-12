@@ -258,6 +258,117 @@ def change_credentials() -> config_store.Credentials:
 # ---------------------------------------------------------------------------
 # 登录主流程
 # ---------------------------------------------------------------------------
+def ensure_network_ready(cfg, cli: PortalClient, quiet: bool = False) -> bool:
+    """
+    确保已连上校园网，返回 True 表示可以继续登录。
+
+    开机自启时，很多电脑的 WiFi/网线要过几秒才连上校园网，
+    此时直接登录只会得到「校园网不可达」，用户却什么都没做错。
+
+    处理流程：
+      1. 快速探测一次，已连通 → 直接返回 True
+      2. 未连通 → 打印等待提示，进入倒计时轮询
+      3. 等待期间连上了 → 提示后继续（返回 True）
+      4. 超时仍未连通 → 询问用户：
+            - 连接校园网后重试（重新进入等待）
+            - 稍后手动运行（关闭程序）
+
+    quiet=True 时不显示交互界面，仅做短暂等待后返回检测结果
+    （供开机自启使用，避免弹窗）。
+    """
+    if not cfg.wait_for_network:
+        return True
+
+    # 1) 快速探测
+    if cli.is_network_ready(cfg.network_probe_timeout):
+        return True
+
+    # —— 静默模式：不打扰，仅短暂等待 ——
+    if quiet:
+        # 开机时网络通常几秒就绪，最多等约 20 秒
+        deadline = time.time() + min(cfg.network_wait_timeout, 20.0)
+        while time.time() < deadline:
+            time.sleep(cfg.network_poll_interval)
+            if cli.is_network_ready(cfg.network_probe_timeout):
+                return True
+        return False
+
+    # 2) 交互模式：打印等待界面
+    print()
+    warn("尚未检测到校园网连接。")
+    info("开机后网络可能需要几秒才就绪，程序正在等待…")
+    print()
+
+    total = cfg.network_wait_timeout
+    step = max(1.0, cfg.network_poll_interval)
+    total_steps = max(1, int(total / step))
+    dot_count = 0
+
+    for i in range(1, total_steps + 1):
+        time.sleep(step)
+        dot_count += 1
+        # 动态进度点，避免用户以为卡死
+        sys.stdout.write("\r  已等待 %2d 秒 %s" % (int(i * step), "." * (dot_count % 15)))
+        sys.stdout.flush()
+
+        if cli.is_network_ready(cfg.network_probe_timeout):
+            sys.stdout.write("\r" + " " * 60 + "\r")
+            ok(f"已连接校园网（等待 {int(i * step)} 秒）")
+            print()
+            return True
+
+    sys.stdout.write("\r" + " " * 60 + "\r")
+    print()
+    fail(f"等待 {int(total)} 秒后仍未检测到校园网。")
+    print()
+    info("请确认：")
+    info("  · 已连接到 SNNU 校园网（有线或无线）")
+    info("  · 网线插好 / 已连接校园网 WiFi")
+    print()
+
+    # 3) 让用户决定
+    while True:
+        choice = ask("请选择（1=我已连好，再试一次  2=稍后手动运行  0=退出程序）", "1").strip()
+        if choice in ("1", "是", "y", "Y", "yes"):
+            print()
+            # 用户主动点了重试，说明他正在连网络 → 无限等待直到连上或他改选
+            info("正在等待校园网连接，连上后会自动继续…")
+            print()
+            waited = 0.0
+            dot_count = 0
+            while True:
+                time.sleep(max(1.0, cfg.network_poll_interval))
+                waited += max(1.0, cfg.network_poll_interval)
+                dot_count += 1
+                sys.stdout.write("\r  已等待 %3d 秒 %s" % (int(waited), "." * (dot_count % 15)))
+                sys.stdout.flush()
+                if cli.is_network_ready(cfg.network_probe_timeout):
+                    sys.stdout.write("\r" + " " * 60 + "\r")
+                    ok(f"已连接校园网（等待 {int(waited)} 秒）")
+                    print()
+                    return True
+                # 每 15 秒给一次选择机会，避免用户干等
+                if int(waited) % 15 == 0:
+                    sys.stdout.write("\r" + " " * 60 + "\r")
+                    again = ask(f"已等待 {int(waited)} 秒仍未连上，继续等吗？(1=继续等  2=稍后手动运行)", "1").strip()
+                    if again not in ("1", "是", "y", "Y"):
+                        print()
+                        info("已退出，稍后双击本程序即可再次自动登录。")
+                        return False
+                    print()
+                    info("继续等待校园网连接…")
+                    print()
+        if choice in ("2", "否", "n", "N", "no"):
+            print()
+            info("已退出，稍后双击本程序即可再次自动登录。")
+            return False
+        if choice in ("0", "q", "Q", "quit", "exit"):
+            print()
+            info("已退出。")
+            return False
+        warn("无效选项，请输入 1、2 或 0。")
+
+
 def do_login(creds: config_store.Credentials, cfg, cli: PortalClient) -> str:
     """
     按配置执行自动登录，返回最终状态码。
@@ -1000,6 +1111,13 @@ def run_quiet() -> int:
     try:
         sys.stdout = devnull
         sys.stderr = devnull
+
+        # 开机瞬间网络通常还没连上校园网（WiFi/网线就绪需要几秒），
+        # 这里静默等待网络就绪，最多约 20 秒，避免一开机就判定失败。
+        if not ensure_network_ready(cfg, cli, quiet=True):
+            cli._log(f"quiet: 等待网络就绪超时（上限 {min(cfg.network_wait_timeout, 20.0):.0f}s），放弃本次登录")
+            return 3
+
         status = do_login(creds, cfg, cli)
     except Exception:
         return 2
@@ -1161,10 +1279,15 @@ def main(argv: list[str] | None = None) -> int:
     if "--test" in argv:
         return cmd_test(cfg, cli)
 
-    # 默认流程：读取凭据 → 自动登录
+    # 默认流程：读取凭据 → 确认网络已就绪 → 自动登录
     creds = config_store.load()
     if creds is None:
         first_run_setup()
+
+    # 开机后网络往往还没连上，先等待 SNNU 网络就绪再登录。
+    # 用户可选择「重试」或「退出」，退出时干净结束，不弹错误。
+    if not ensure_network_ready(cfg, cli, quiet=False):
+        return 0
         creds = config_store.load()
     if creds is None:
         fail("读取凭据失败，请运行 --set 重新设置。")

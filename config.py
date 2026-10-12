@@ -110,6 +110,18 @@ class PortalConfig:
     retry_delay: float = 1.5          # 重试间隔（秒）
     verify_tls: bool = False          # 自签证书校园网可置 False
 
+    # ---- 开机网络延迟（WiFi/网线就绪需要时间）----
+    # 开机后部分电脑要过几秒才能连上校园网，此时若直接登录只会报"不可达"。
+    # 因此启动时先做网络就绪探测，未就绪则进入等待流程。
+    #   wait_for_network     : True = 启用等待；False = 直接尝试登录
+    #   network_wait_timeout : 最长等待秒数（超过则询问用户）
+    #   network_poll_interval: 两次探测之间的间隔秒数
+    #   network_probe_timeout: 单次探测的超时（要短，避免每次都等满）
+    wait_for_network: bool = True
+    network_wait_timeout: float = 60.0
+    network_poll_interval: float = 3.0
+    network_probe_timeout: float = 2.0
+
     # ---- 交互行为 ----
     # 登录成功后是否自动关闭窗口：
     #   "auto"  = 倒计时结束自动关闭（符合「连接完自动关闭」的需求）
