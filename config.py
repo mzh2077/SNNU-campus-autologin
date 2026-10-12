@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass, field, asdict
 
 APP_NAME = "CampusAutoLogin"
-APP_VERSION = "1.0.0"
+APP_VERSION = "2.0.0"
 
 
 # ---------------------------------------------------------------------------
