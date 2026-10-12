@@ -321,7 +321,51 @@ class PortalClient:
             return LoginStatus.OK
         return self._classify_error(text)
 
-    def verify_credentials(self, account: str, password: str) -> str:
+    def verify_by_logout(self, account: str, password: str) -> str:
+        """
+        通过「先登出、再登录」来验证密码——这是**唯一可靠**的校验方式。
+
+        背景：主门户在本机已在线时，无论密码对错都返回显示"当前登录账号"的
+        页面（会话已存在），因此**无法**据此判断密码正确性。
+        只有先登出让会话失效，login.jsp 才会对错误密码退回登录页。
+
+        ⚠️ 会中断当前网络连接几秒。调用方需事先告知用户。
+
+        返回 LoginStatus；失败时可能已把用户登出，调用方应提示重新连接。
+        """
+        account = self.normalize_account(account)
+
+        # 1) 登出，拿到一个干净（未登录）的会话
+        try:
+            self.logout()
+        except (TimeoutError, ConnectionError) as e:
+            self._log(f"verify_by_logout: 登出失败 {e}")
+            return LoginStatus.UNREACHABLE
+        except Exception as e:
+            self._log(f"verify_by_logout: 登出异常 {type(e).__name__}")
+            # 登出失败不致命，继续尝试校验
+            pass
+
+        # 稍等让门户会话生效
+        time.sleep(1.0)
+
+        # 2) 未登录状态下校验（此时 login.jsp 能正确区分密码对错）
+        result = self._verify_via_main_portal(account, password)
+
+        # 3) 无论结果如何都尝试恢复登录，避免把用户留在离线状态
+        if result == LoginStatus.OK:
+            self._log("verify_by_logout: 校验通过，已重新登录")
+        else:
+            self._log(f"verify_by_logout: 校验失败({result})，尝试恢复原账号登录")
+            try:
+                self.login(account, password)
+            except Exception:
+                pass
+
+        return result
+
+    def verify_credentials(self, account: str, password: str,
+                          skip_if_online: bool = True) -> str:
         """
         校验账号密码是否正确。
 
@@ -331,27 +375,32 @@ class PortalClient:
 
         现在的正确做法：
         1. 若本机**已在线**且在线账号与目标一致 —— 说明这套凭据确实能上网
-           （用户既然能在线，就证明密码有效），直接返回 OK，不打断连接。
+           （用户既然能在线，就证明密码有效），返回 SKIPPED，不打断连接。
         2. 若**未在线** —— 用主门户 snnuportal 的 login.jsp 真实校验。
            未登录时登录失败会回到登录页（含 password 输入框），
            成功则跳回状态页，据此可准确区分。
+
+        skip_if_online=False 时**强制**走真实校验，即使已在线也校验。
+        用于「登录失败后重新输入密码」——否则在线状态下输错密码
+        仍会被当作有效保存，用户下次打开依旧失败。
 
         返回 LoginStatus。
         """
         account = self.normalize_account(account)
 
-        # 1) 已在线时不做破坏性校验
-        try:
-            online_status, page_info = self.check_status(expect_account=account)
-            if online_status == LoginStatus.ALREADY_ONLINE:
-                self._log("verify: 当前已在线，跳过密码校验")
-                return LoginStatus.SKIPPED
-        except (TimeoutError, ConnectionError):
-            return LoginStatus.UNREACHABLE
-        except Exception:
-            pass
+        # 1) 已在线时不做破坏性校验（除非要求强制校验）
+        if skip_if_online:
+            try:
+                online_status, page_info = self.check_status(expect_account=account)
+                if online_status == LoginStatus.ALREADY_ONLINE:
+                    self._log("verify: 当前已在线，跳过密码校验")
+                    return LoginStatus.SKIPPED
+            except (TimeoutError, ConnectionError):
+                return LoginStatus.UNREACHABLE
+            except Exception:
+                pass
 
-        # 2) 未在线：用主门户真实校验
+        # 2) 用主门户真实校验
         return self._verify_via_main_portal(account, password)
 
     def _verify_via_main_portal(self, account: str, password: str) -> str:

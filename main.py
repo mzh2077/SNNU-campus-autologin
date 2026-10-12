@@ -157,12 +157,16 @@ CARRIER_CHOICES = {
 }
 
 
-def first_run_setup() -> config_store.Credentials:
+def first_run_setup(force_verify: bool = False) -> config_store.Credentials:
     """
     首次运行：引导输入账号密码 → **验证** → 验证通过后才保存。
 
     验证不通过（密码错误）时允许重新输入，最多 3 次；
     网络不可达时询问是否仍要保存，避免用户明明没连网却被卡住。
+
+    force_verify=True 时**不做"已在线就跳过"的短路**，
+    必须真正校验密码。用于「登录失败后重新输入」的场景——
+    否则用户在线时改密码，错误密码仍会被保存，问题无法根治。
     """
     banner("首次使用 · 请输入校园网账号")
     warn("本信息仅保存在你自己的电脑上（已加密），不会上传到任何服务器。")
@@ -196,7 +200,8 @@ def first_run_setup() -> config_store.Credentials:
 
     # —— 关键：验证通过后才保存，密码错误不留错误凭据 ——
     cli = PortalClient(config.portal())
-    verified = verify_credentials(creds, config.portal(), cli)
+    verified = verify_credentials(creds, config.portal(), cli,
+                                 force_verify=force_verify)
 
     if not verified:
         print()
@@ -241,6 +246,54 @@ def ask_autostart() -> None:
             info("或直接在任务管理器「启动」中禁用。")
     else:
         info("已跳过。需要时可运行  校园网自动登录.exe --autostart 开启。")
+
+
+def offer_credential_recovery(creds: config_store.Credentials,
+                              cfg, cli: PortalClient) -> config_store.Credentials | None:
+    """
+    登录失败（密码错误 / 账号被锁定）后的交互式恢复引导。
+
+    解决的实际问题：原先只提示「请运行 --set」，但绝大多数用户
+    不知道那是什么、也不会开命令行，于是每次打开程序都看到同样的
+    错误提示，形成死循环。此处改为**直接在当前窗口**引导重输，
+    改完立即重试登录。
+
+    返回重试时的新凭据；用户放弃则返回 None。
+    """
+    banner("账号密码可能已失效")
+    fail(f"当前保存的账号 {creds.masked()} 登录失败。")
+    print()
+    info("常见原因：")
+    info("  · 密码记错，或换了新密码")
+    info("  · 密码被修改 / 账号被锁定")
+    info("  · 账号输错（学号或运营商后缀不对）")
+    print()
+    info("可以在这里直接重新输入，改完会立即重试登录。")
+    print()
+
+    while True:
+        choice = ask("现在修改账号密码吗？（1=是，立即修改  2=否，先退出）", "1").strip()
+        if choice in ("2", "否", "n", "N", "no"):
+            print()
+            info("已退出。下次打开本程序仍会尝试用已保存的账号登录。")
+            info("想改密码时，运行本程序后选此项即可，无需命令行。")
+            return None
+
+        if choice not in ("1", "是", "y", "Y", "yes"):
+            warn("无效选项，请输入 1 或 2。")
+            continue
+
+        # —— 进入修改流程 ——
+        print()
+        if config_store.clear():
+            info("已清除原凭据，请在下方重新输入。\n")
+
+        # 关键：本次改密**不做跳过式校验**。
+        # 之前的问题正是在线状态下 verify_credentials 返回 SKIPPED，
+        # 导致错误密码照样被保存，用户下次打开依旧登录失败。
+        new_creds = first_run_setup(force_verify=True)
+        # 不再询问开机自启——用户之前已设置过，改密码与此无关
+        return new_creds
 
 
 def change_credentials() -> config_store.Credentials:
@@ -443,7 +496,7 @@ def show_result(status: str) -> None:
         ok("校园网已在线。")
     elif status == LoginStatus.BAD_CREDENTIAL:
         fail("账号或密码错误。")
-        info("请运行  校园网自动登录.exe --set  重新输入账号密码。")
+        info("程序接下来会引导你重新输入，或按回车直接退出。")
     elif status == LoginStatus.NEED_CAPTCHA:
         fail("该账号登录需要验证码，程序无法自动完成。")
         info("请先在浏览器中打开门户完成一次带验证码的登录，")
@@ -554,7 +607,8 @@ def cmd_test(cfg, cli: PortalClient) -> int:
 # 入口
 # ---------------------------------------------------------------------------
 def verify_credentials(creds: config_store.Credentials, cfg,
-                       cli: PortalClient, max_attempts: int = 3) -> bool:
+                       cli: PortalClient, max_attempts: int = 3,
+                       force_verify: bool = False) -> bool:
     """
     校验账号密码，返回是否通过。
 
@@ -562,20 +616,74 @@ def verify_credentials(creds: config_store.Credentials, cfg,
       - 密码正确   → 输出「连接成功」并返回 True
       - 密码错误   → 明确提示，允许重新输入（最多 max_attempts 次）
       - 网络不可达 → 说明当前无法验证，询问是否仍要保存
+
+    force_verify=True：即使已在线也强制走真实校验（不跳过），
+    用于「登录失败后重新输入密码」的场景。
     """
     account = cli.normalize_account(creds.account)
+
+    # 用户已选择「登出验证」后，重输密码不再重复询问，直接继续验证。
+    # 否则会出现「验证→错→重输→再问要不要验证」的冗余交互。
+    logout_verify_ok = False
 
     for attempt in range(1, max_attempts + 1):
         print()
         info(f"正在验证账号 {creds.masked()} …")
-        status = cli.verify_credentials(account, creds.password)
 
-        # —— 已在线，跳过校验（不打断现有连接）——
-        if status == LoginStatus.SKIPPED:
-            ok("账号可用，当前已在线。")
-            info("（检测到你已连接校园网，因此未再验证密码。")
-            info("  若想完整验证密码，请先在浏览器中退出校园网后重新设置。）")
+        # —— 已在线：可选是否登出以真正校验密码 ——
+        try:
+            online, _info = cli.check_status(expect_account=account)
+        except Exception:
+            online = None
+
+        if online == LoginStatus.ALREADY_ONLINE:
+            if not force_verify:
+                ok("账号可用，当前已在线。")
+                info("（检测到你已连接校园网，因此未再验证密码。")
+                info("  若想完整验证密码，可先在浏览器退出校园网后重新设置。）")
+                return True
+
+            # 强制校验：主门户在线时无法区分密码对错，只能登出后再试
+            if not logout_verify_ok:
+                print()
+                warn("你当前已连接校园网，门户此时无法验证密码正确性。")
+                info("若要真正校验，需要先退出校园网（会断网几秒，程序会自动连回）。")
+                answer = ask("要退出校园网来验证密码吗？（1=是，验证  2=否，直接保存）", "2").strip()
+                if answer not in ("1", "是", "y", "Y", "yes"):
+                    info("将直接保存。若密码有误，下次打开程序可在当前窗口重新修改。")
+                    return True
+                logout_verify_ok = True
+            else:
+                info("正在重新验证…")
+
+            status = cli.verify_by_logout(account, creds.password)
+
+            if status == LoginStatus.OK:
+                ok("密码正确，验证通过！")
+                return True
+
+            if status == LoginStatus.BAD_CREDENTIAL:
+                fail("密码错误，未保存。")
+                info("请确认密码拼写是否正确。")
+                if attempt >= max_attempts:
+                    info(f"已连续验证失败 {max_attempts} 次。")
+                    return False
+                if ask("是否重新输入密码？（1=是  2=否，放弃保存）", "1").strip() not in ("1", "是", "y", "Y"):
+                    return False
+                creds.password = ask_password("请重新输入密码")
+                if not creds.password:
+                    return False
+                continue
+
+            # 断网等其他情况
+            warn(LoginStatus.message(status))
+            if ask("是否仍要保存该账号密码？（1=是  2=否，放弃）", "2").strip() not in ("1", "是", "y", "Y"):
+                return False
             return True
+
+        # —— 未在线：真实校验 ——
+        status = cli.verify_credentials(account, creds.password,
+                                        skip_if_online=False)
 
         # —— 密码正确 ——
         if status == LoginStatus.OK:
@@ -1241,6 +1349,14 @@ def main(argv: list[str] | None = None) -> int:
     if "--delete-account" in argv:
         return cmd_delete_account()
 
+    # --status / --test：纯查询命令，不需要账号密码，
+    # 也必须前置，否则无凭据时会被首次运行向导拦截。
+    if "--status" in argv:
+        return cmd_status(cfg, cli)
+
+    if "--test" in argv:
+        return cmd_test(cfg, cli)
+
     if "--set" in argv:
         change_credentials()
         # 修改后直接继续登录
@@ -1271,14 +1387,6 @@ def main(argv: list[str] | None = None) -> int:
                     first_run_setup()
                     ask_autostart()
 
-    # --status
-    if "--status" in argv:
-        return cmd_status(cfg, cli)
-
-    # --test
-    if "--test" in argv:
-        return cmd_test(cfg, cli)
-
     # 默认流程：读取凭据 → 确认网络已就绪 → 自动登录
     creds = config_store.load()
     if creds is None:
@@ -1295,7 +1403,34 @@ def main(argv: list[str] | None = None) -> int:
 
     banner()
     status = do_login(creds, cfg, cli)
-    show_result(status)
+
+    # 登录失败且原因是密码/账号问题时，提供**交互式**修改入口。
+    # 原先只提示「运行 --set」，不懂命令行的用户会陷入
+    # 「每次打开都报错」的循环，等于无法使用。
+    retry_hint_shown = False
+    for _round in range(3):
+        show_result(status)
+        if not LoginStatus.is_good(status):
+            # 只有这两类问题需要改凭据；网络/验证码/协议类改了也没用
+            if status not in (LoginStatus.BAD_CREDENTIAL, LoginStatus.RATE_LIMITED):
+                break
+            if retry_hint_shown:
+                # 已提示过一次仍失败 → 不再重复追问，避免无限循环
+                print()
+                info("若仍无法登录，可重新打开本程序再次修改账号密码，")
+                info("或在浏览器打开门户确认账号密码是否正确。")
+                break
+            retry_hint_shown = True
+            new_creds = offer_credential_recovery(creds, cfg, cli)
+            if new_creds is None:
+                auto_close(cfg, success=False)
+                return 1
+            print()
+            creds = new_creds
+            status = do_login(creds, cfg, cli)
+            # 新凭据登录成功 → 跳出，进入下面的成功分支
+            if LoginStatus.is_good(status):
+                break
 
     if LoginStatus.is_good(status):
         # 手动打开：登录完成后进入设置菜单，等待用户操作。
