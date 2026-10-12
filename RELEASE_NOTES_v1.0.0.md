@@ -73,7 +73,7 @@ clone 源码后 `python main.py` 自己跑。
 
 - 账号密码存在：`%LOCALAPPDATA%\CampusAutoLogin\`（DPAPI 加密）
 - 想删干净：程序菜单选 `4`（含凭据与程序文件）
-- 文件校验 SHA-256：`81a936a12eea70ce6599e89299265eb9ddf62ca1b369ba5a256d00000eefb48b`
+- 文件校验 SHA-256：`a37e63947fa7936272b84d6be7ed4ab2124d181637d20b7a36693608b79a62e2`
 
 完整文档见 [README](https://github.com/mzh2077/SNNU-campus-autologin)。
 
