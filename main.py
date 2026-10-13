@@ -157,16 +157,16 @@ CARRIER_CHOICES = {
 }
 
 
-def first_run_setup(force_verify: bool = False) -> config_store.Credentials:
+def first_run_setup() -> config_store.Credentials:
     """
     首次运行：引导输入账号密码 → **验证** → 验证通过后才保存。
 
     验证不通过（密码错误）时允许重新输入，最多 3 次；
     网络不可达时询问是否仍要保存，避免用户明明没连网却被卡住。
 
-    force_verify=True 时**不做"已在线就跳过"的短路**，
-    必须真正校验密码。用于「登录失败后重新输入」的场景——
-    否则用户在线时改密码，错误密码仍会被保存，问题无法根治。
+    注意：本机已在线时门户无法区分密码对错，
+    此时会明确提示"密码未验证"并询问是否退出校园网来真实验证，
+    绝不会谎报"密码正确"。
     """
     banner("首次使用 · 请输入校园网账号")
     warn("本信息仅保存在你自己的电脑上（已加密），不会上传到任何服务器。")
@@ -200,8 +200,7 @@ def first_run_setup(force_verify: bool = False) -> config_store.Credentials:
 
     # —— 关键：验证通过后才保存，密码错误不留错误凭据 ——
     cli = PortalClient(config.portal())
-    verified = verify_credentials(creds, config.portal(), cli,
-                                 force_verify=force_verify)
+    verified = verify_credentials(creds, config.portal(), cli)
 
     if not verified:
         print()
@@ -291,7 +290,7 @@ def offer_credential_recovery(creds: config_store.Credentials,
         # 关键：本次改密**不做跳过式校验**。
         # 之前的问题正是在线状态下 verify_credentials 返回 SKIPPED，
         # 导致错误密码照样被保存，用户下次打开依旧登录失败。
-        new_creds = first_run_setup(force_verify=True)
+        new_creds = first_run_setup()
         # 不再询问开机自启——用户之前已设置过，改密码与此无关
         return new_creds
 
@@ -607,8 +606,7 @@ def cmd_test(cfg, cli: PortalClient) -> int:
 # 入口
 # ---------------------------------------------------------------------------
 def verify_credentials(creds: config_store.Credentials, cfg,
-                       cli: PortalClient, max_attempts: int = 3,
-                       force_verify: bool = False) -> bool:
+                       cli: PortalClient, max_attempts: int = 3) -> bool:
     """
     校验账号密码，返回是否通过。
 
@@ -617,14 +615,12 @@ def verify_credentials(creds: config_store.Credentials, cfg,
       - 密码错误   → 明确提示，允许重新输入（最多 max_attempts 次）
       - 网络不可达 → 说明当前无法验证，询问是否仍要保存
 
-    force_verify=True：即使已在线也强制走真实校验（不跳过），
-    用于「登录失败后重新输入密码」的场景。
+    关于「已在线」的情况：
+    门户在本机已登录时**无法区分密码对错**（无论对错都返回同一页面）。
+    此时程序**绝不会显示「密码正确」**，而是明确告知未验证，
+    并询问是否退出校园网来真实验证（验证后会自动重新连回）。
     """
     account = cli.normalize_account(creds.account)
-
-    # 用户已选择「登出验证」后，重输密码不再重复询问，直接继续验证。
-    # 否则会出现「验证→错→重输→再问要不要验证」的冗余交互。
-    logout_verify_ok = False
 
     for attempt in range(1, max_attempts + 1):
         print()
@@ -637,24 +633,20 @@ def verify_credentials(creds: config_store.Credentials, cfg,
             online = None
 
         if online == LoginStatus.ALREADY_ONLINE:
-            if not force_verify:
-                ok("账号可用，当前已在线。")
-                info("（检测到你已连接校园网，因此未再验证密码。")
-                info("  若想完整验证密码，可先在浏览器退出校园网后重新设置。）")
-                return True
+            # 已在线：门户此时无法区分密码对错（无论对错都返回"当前登录账号"）。
+            # 绝不能因此显示"密码正确"——那会误导用户以为密码没问题。
+            if attempt > 1:
+                info("正在用新密码重新验证…")
+            print()
+            warn("你当前已连接校园网，程序无法验证你刚输入的密码。")
+            info("门户在已登录状态下不区分密码对错，")
+            info("若要真实验证，需要先退出校园网（会断网几秒，之后自动连回）。")
+            answer = ask("要退出校园网验证密码吗？（1=是，验证  2=否，直接保存）", "2").strip()
 
-            # 强制校验：主门户在线时无法区分密码对错，只能登出后再试
-            if not logout_verify_ok:
-                print()
-                warn("你当前已连接校园网，门户此时无法验证密码正确性。")
-                info("若要真正校验，需要先退出校园网（会断网几秒，程序会自动连回）。")
-                answer = ask("要退出校园网来验证密码吗？（1=是，验证  2=否，直接保存）", "2").strip()
-                if answer not in ("1", "是", "y", "Y", "yes"):
-                    info("将直接保存。若密码有误，下次打开程序可在当前窗口重新修改。")
-                    return True
-                logout_verify_ok = True
-            else:
-                info("正在重新验证…")
+            if answer not in ("1", "是", "y", "Y", "yes"):
+                warn("注意：密码未经验证，将直接保存。")
+                info("若密码有误，下次打开程序可在当前窗口重新修改，不会卡住。")
+                return True
 
             status = cli.verify_by_logout(account, creds.password)
 
