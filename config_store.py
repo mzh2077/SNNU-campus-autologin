@@ -16,7 +16,6 @@ Windows : 使用 DPAPI（CryptProtectData / CryptUnprotectData）加密，
    避免与代码产生关联。
 """
 
-import base64
 import ctypes
 import ctypes.wintypes
 import getpass
@@ -24,8 +23,6 @@ import hashlib
 import json
 import os
 import platform
-import socket
-import struct
 import sys
 
 from config import cred_file, data_dir

@@ -153,12 +153,24 @@ def build() -> int:
         print(f"使用图标：{icon}")
 
     cmd += [
-        "--hidden-import", "cryptography.hazmat.primitives.ciphers",
         "--hidden-import", "ctypes.wintypes",
         "--exclude-module", "tkinter",
         "--exclude-module", "matplotlib",
         "--exclude-module", "numpy",
         "--exclude-module", "PIL",     # 图标仅在打包期用，运行时无需 Pillow
+        # cryptography 及其 OpenSSL 依赖约 19 MB（占总体积 2/3），
+        # 但 config_store 的加密是 **DPAPI 优先、AES 兜底**：
+        # Windows 上 DPAPI（ctypes 调 crypt32）必定可用，永远走不到 AES。
+        # 因此排除它——仅在非 Windows 且无 DPAPI 时才会降级为不加密。
+        "--exclude-module", "cryptography",
+        "--exclude-module", "ssl",
+        # 注意：email / http 不能排除！
+        # urllib.request 依赖 email 解析响应头，排除后 exe 启动即崩
+        # （ModuleNotFoundError: No module named 'email'）
+        "--exclude-module", "unittest",
+        "--exclude-module", "pydoc",
+        "--exclude-module", "doctest",
+        "--exclude-module", "distutils",
         os.path.join(HERE, "main.py"),
     ]
     print("\n执行：", " ".join(cmd), "\n")

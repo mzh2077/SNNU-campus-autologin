@@ -30,6 +30,7 @@
 import getpass
 import os
 import sys
+import threading
 import time
 
 # 允许双击 exe 直接运行（PyInstaller 打包时目录不同）
@@ -538,11 +539,38 @@ def auto_close(cfg, success: bool) -> None:
             _wait_enter()
 
 
-def _wait_enter() -> None:
+def _wait_enter(timeout: float = 30.0) -> None:
+    """
+    等待用户按回车，但**最多等 timeout 秒**。
+
+    为什么要超时：若程序被任务计划、IDE 控制台等以"stdin 保持打开"
+    的方式调用，无人按键就会**永久挂起**，进程堆积且用户毫无感知。
+    EOFError（stdin 被重定向到 null）时立即返回，本就安全。
+    """
     try:
-        input("\n  按回车键关闭窗口… ")
+        if timeout <= 0:
+            return
+        # 无可用 stdin（非交互环境）时直接跳过，避免挂起
+        if not (sys.stdin and sys.stdin.isatty()):
+            return
+        print(f"\n  按回车键关闭窗口…（{int(timeout)} 秒后自动关闭）")
+        # 用线程实现超时：主线程等待输入，到时自动返回
+        result = []
+        t = threading.Thread(target=lambda: result.append(_read_line()),
+                             daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            print("\n  （无人应答，自动关闭）")
     except (EOFError, KeyboardInterrupt):
         pass
+
+
+def _read_line() -> str:
+    try:
+        return input()
+    except (EOFError, KeyboardInterrupt):
+        return ""
 
 
 # ---------------------------------------------------------------------------
