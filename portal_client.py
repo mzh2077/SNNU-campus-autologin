@@ -313,13 +313,29 @@ class PortalClient:
         if code >= 400:
             return LoginStatus.PROTOCOL_ERROR
 
+        # 先判错误：登录页本身也含「帐号」「密码」等字样，
+        # 若先用宽松的成功关键词（如「已登录」），会把错误页面误判成成功。
+        for key, markers in self.cfg.error_markers.items():
+            if key in ("bad_credential", "need_captcha", "rate_limited"):
+                if any(m in text for m in markers):
+                    return self._status_for(key)
+
         if self._looks_online(text) and self._account_matches(text, account):
             return LoginStatus.OK
 
-        # 出现「已登录/我的状态/自助服务」等字样也视为成功
-        if re.search(r'(已登录|我的状态|当前登录|退出登录|欢迎)', text):
+        # 成功判据：在线状态页特征（上网IP/上网时间/MAC地址 表头）
+        if re.search(r'(上网IP|上网时间|MAC地址)', text):
             return LoginStatus.OK
+
         return self._classify_error(text)
+
+    def _status_for(self, key: str) -> str:
+        """把 error_markers 的分类键映射为 LoginStatus。"""
+        return {
+            "bad_credential": LoginStatus.BAD_CREDENTIAL,
+            "need_captcha":   LoginStatus.NEED_CAPTCHA,
+            "rate_limited":   LoginStatus.RATE_LIMITED,
+        }.get(key, LoginStatus.UNKNOWN_ERROR)
 
     def verify_by_logout(self, account: str, password: str) -> str:
         """
@@ -403,8 +419,77 @@ class PortalClient:
         # 2) 用主门户真实校验
         return self._verify_via_main_portal(account, password)
 
+    def _verify_via_zili(self, account: str, password: str) -> str | None:
+        """
+        用 /zili/index.php 校验密码。返回 None 表示该端点不可用，应走兜底。
+
+        判断依据（实测）：
+          · 错误密码 → 页面出现「帐号或密码错误」
+          · 正确密码 → 跳转到在线状态页，含上网 IP / 上网时间等表格
+        因此判成功必须看到**在线状态页特征**，而不是宽松关键词
+        （登录页本身也含「帐号」「密码」等字样）。
+        """
+        payload = {
+            self.cfg.login_mode_field: self.cfg.login_mode_value,
+            self.cfg.login_user_field: account,
+            self.cfg.login_pass_field: password,
+        }
+        body = urllib.parse.urlencode(payload).encode("utf-8")
+
+        try:
+            code, text = self._open(self.cfg.login_url, data=body)
+        except (TimeoutError, ConnectionError):
+            return None                     # 网络问题 → 交给兜底/上层判断
+        except Exception as e:
+            self._log(f"verify_zili: 异常 {type(e).__name__}")
+            return None
+
+        if code >= 500:
+            return None
+
+        # 明确的错误提示优先判断，避免被后续特征误判
+        for key, markers in self.cfg.error_markers.items():
+            if key == "bad_credential" and any(m in text for m in markers):
+                self._log("verify_zili: 明确返回「帐号或密码错误」")
+                return LoginStatus.BAD_CREDENTIAL
+            if key == "need_captcha" and any(m in text for m in markers):
+                return LoginStatus.NEED_CAPTCHA
+            if key == "rate_limited" and any(m in text for m in markers):
+                return LoginStatus.RATE_LIMITED
+
+        # 成功判据：在线状态页的独有特征（上网IP / MAC地址 / 上网时间表头）
+        if re.search(r'(上网IP|上网时间|MAC地址)', text) and self._looks_online(text):
+            return LoginStatus.OK
+        # 出现明确的成功标识（不含「帐号」「密码」等登录页用词）
+        if re.search(r'(已成功|登录成功|认证通过)', text):
+            return LoginStatus.OK
+
+        # 返回登录页且带密码框 → 认证未通过
+        if re.search(r'type=[\'"]?password', text, re.I):
+            return LoginStatus.BAD_CREDENTIAL
+
+        return None                         # 特征不明确 → 走兜底
+
     def _verify_via_main_portal(self, account: str, password: str) -> str:
-        """用主门户 snnuportal 校验密码（要求当前未在线）。"""
+        """
+        校验密码（要求当前未在线）。
+
+        ⚠️ 实测教训（2026-10-14）：
+        **snnuportal 的 login.jsp 已不提供登录表单**——它是中转页，
+        真实表单在 iframe 里指向 `/zili/`（校园宽带自助服务系统）。
+        因此向 snnuportal 提交 account/password 永远不会被识别，
+        结果无论密码对错都落到兜底分支 → 一律判为 BADCRED，
+        表现为「怎么输都提示密码错误」。
+
+        故改为优先用 `/zili/index.php`（字段 mode/login/passwd）校验——
+        它会对错误密码明确返回「帐号或密码错误」。
+        snnuportal 仅作兜底。
+        """
+        status = self._verify_via_zili(account, password)
+        if status is not None:
+            return status
+
+        # 兜底：仍尝试 snnuportal
         login_url = self.cfg.status_url.rsplit("/", 1)[0] + "/login.jsp"
         payload = {
             self.cfg.alt_user_field: account,
