@@ -140,11 +140,16 @@ class PortalConfig:
     )
 
     # ---- 状态页判定关键词（门户改版时改这里）----
-    # 页面出现「当前登录账号」说明已在线
+    # 页面出现这些词说明已在线。注意必须包含 /zili/ 在线状态页的表头词
+    # （上网IP / 上网时间 / MAC地址），否则登录成功后会被误判为未登录，
+    # 进而当成密码错误——这正是「怎么输都不对」的原因之一。
     online_markers: list = field(default_factory=lambda: [
         "当前登录账号", "登录时间", "断开连接", "logoff",
+        "上网IP", "上网时间", "MAC地址", "上网设备", "上网位置",
     ])
-    # 页面出现这些关键词说明当前未登录、停留在登录页
+    # ⚠️ offline_markers 仅供人工排查参考，程序**不用**它判定密码错误——
+    # 登录页本身就含「account」「password」「登录」等字样，
+    # 用它判断必然误报。误报责任只在门户明确给出错误提示时才成立。
     offline_markers: list = field(default_factory=lambda: [
         "account", "password", "登录", "登陆",
     ])

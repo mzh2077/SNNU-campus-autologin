@@ -421,13 +421,19 @@ class PortalClient:
 
     def _verify_via_zili(self, account: str, password: str) -> str | None:
         """
-        用 /zili/index.php 校验密码。返回 None 表示该端点不可用，应走兜底。
+        用 /zili/index.php 校验密码。返回 None 表示"无法判定"，应走兜底。
 
-        判断依据（实测）：
-          · 错误密码 → 页面出现「帐号或密码错误」
-          · 正确密码 → 跳转到在线状态页，含上网 IP / 上网时间等表格
-        因此判成功必须看到**在线状态页特征**，而不是宽松关键词
-        （登录页本身也含「帐号」「密码」等字样）。
+        ⚠️ 判定原则（2026-10-15 重订，极其重要）：
+        **只有门户明确返回「帐号或密码错误」才判 BAD_CREDENTIAL。**
+        其余一切情况——页面认不出、返回登录页、特征不匹配——
+        一律返回 None（无法判定），交由调用方决定如何提示用户。
+
+        旧实现把"落到兜底"当作密码错，导致用户**输入正确密码也被拒**，
+        表现为「怎么输都提示错误」。这是误报的根本来源。
+
+        实测特征：
+          · 密码错误 → 页面出现「帐号或密码错误」（「帐号」是门户的错别字写法）
+          · 登录成功 → 在线状态页，含「上网IP / 上网时间 / MAC地址」表头
         """
         payload = {
             self.cfg.login_mode_field: self.cfg.login_mode_value,
@@ -439,36 +445,33 @@ class PortalClient:
         try:
             code, text = self._open(self.cfg.login_url, data=body)
         except (TimeoutError, ConnectionError):
-            return None                     # 网络问题 → 交给兜底/上层判断
+            return None                      # 网络不通 ≠ 密码错
         except Exception as e:
             self._log(f"verify_zili: 异常 {type(e).__name__}")
             return None
 
         if code >= 500:
-            return None
+            return None                      # 门户异常 ≠ 密码错
 
-        # 明确的错误提示优先判断，避免被后续特征误判
+        # ① 门户明确报错 —— 这是唯一可信的"密码错"依据
         for key, markers in self.cfg.error_markers.items():
             if key == "bad_credential" and any(m in text for m in markers):
-                self._log("verify_zili: 明确返回「帐号或密码错误」")
+                self._log("verify_zili: 门户明确返回「帐号或密码错误」")
                 return LoginStatus.BAD_CREDENTIAL
             if key == "need_captcha" and any(m in text for m in markers):
                 return LoginStatus.NEED_CAPTCHA
             if key == "rate_limited" and any(m in text for m in markers):
                 return LoginStatus.RATE_LIMITED
 
-        # 成功判据：在线状态页的独有特征（上网IP / MAC地址 / 上网时间表头）
-        if re.search(r'(上网IP|上网时间|MAC地址)', text) and self._looks_online(text):
-            return LoginStatus.OK
-        # 出现明确的成功标识（不含「帐号」「密码」等登录页用词）
-        if re.search(r'(已成功|登录成功|认证通过)', text):
+        # ② 在线状态页特征 → 登录成功
+        #    注意**不能**再要求 _looks_online()：它依赖主门户专有关键词，
+        #    对 /zili/ 页面恒为 False，会把登录成功误判为失败。
+        if re.search(r'(上网IP|上网时间|MAC地址|上网设备|上网位置)', text):
             return LoginStatus.OK
 
-        # 返回登录页且带密码框 → 认证未通过
-        if re.search(r'type=[\'"]?password', text, re.I):
-            return LoginStatus.BAD_CREDENTIAL
-
-        return None                         # 特征不明确 → 走兜底
+        # ③ 其余情况：无法判定，绝不臆断为密码错
+        self._log("verify_zili: 页面特征无法判定密码是否正确")
+        return None
 
     def _verify_via_main_portal(self, account: str, password: str) -> str:
         """
@@ -477,13 +480,13 @@ class PortalClient:
         ⚠️ 实测教训（2026-10-14）：
         **snnuportal 的 login.jsp 已不提供登录表单**——它是中转页，
         真实表单在 iframe 里指向 `/zili/`（校园宽带自助服务系统）。
-        因此向 snnuportal 提交 account/password 永远不会被识别，
-        结果无论密码对错都落到兜底分支 → 一律判为 BADCRED，
-        表现为「怎么输都提示密码错误」。
+        因此向 snnuportal 提交 account/password 永远不会被识别。
+        故优先用 `/zili/index.php`（字段 mode/login/passwd）校验，
+        它会对错误密码明确返回「帐号或密码错误」；snnuportal 仅作兜底。
 
-        故改为优先用 `/zili/index.php`（字段 mode/login/passwd）校验——
-        它会对错误密码明确返回「帐号或密码错误」。
-        snnuportal 仅作兜底。
+        ⚠️ 同样重要：**无法判定时返回 UNKNOWN_ERROR，绝不返回 BAD_CREDENTIAL。**
+        旧实现末尾是 `return LoginStatus.BAD_CREDENTIAL`，
+        使任何认不出的页面都被当成密码错——这是误报的直接原因。
         """
         status = self._verify_via_zili(account, password)
         if status is not None:
@@ -511,23 +514,18 @@ class PortalClient:
         if code >= 400:
             return LoginStatus.UNREACHABLE
 
-        # 出现登录表单（password 输入框）= 认证失败，页面退回登录页
-        if self._has_login_form(text):
-            return LoginStatus.BAD_CREDENTIAL
+        # ① 门户明确报错 → 可信
+        for key, markers in self.cfg.error_markers.items():
+            if key == "bad_credential" and any(m in text for m in markers):
+                return LoginStatus.BAD_CREDENTIAL
 
-        # 出现验证码提示
-        if "验证码" in text and self._looks_online(text) is False:
-            for key, markers in self.cfg.error_markers.items():
-                if key == "need_captcha" and any(m in text for m in markers):
-                    return LoginStatus.NEED_CAPTCHA
-
+        # ② 在线特征 → 成功
         if self._looks_online(text) and self._account_matches(text, account):
             return LoginStatus.OK
 
-        # 既没登录框也没在线信息：无法判定，按需验证码/未知处理
-        if self._looks_online(text):
-            return LoginStatus.OK
-        return LoginStatus.BAD_CREDENTIAL
+        # ③ 认不出来 → 无法判定，不是密码错
+        self._log("verify: snnuportal 页面无法判定，改报 UNKNOWN_ERROR")
+        return LoginStatus.UNKNOWN_ERROR
 
     def _account_matches(self, text: str, account: str) -> bool:
         """
@@ -536,17 +534,39 @@ class PortalClient:
         为什么必须做这一步：若本机本来已在线，任何登录请求（包括密码错误）
         之后的页面回查都会显示「已在线」，若只看在线标识就会把密码错误
         误判成登录成功。因此要求页面上出现的账号与目标账号一致。
+
+        ⚠️ 格式覆盖要广（2026-10-15 修正）：
+        门户展示账号的位置随改版而变，已实测到过的写法包括
+          · <input id="account" value="学号@运营商" />
+          · 当前登录账号：学号@运营商
+          · vloginid=学号@运营商 / loginid= / userid=
+        只认其中一两种会让「其实成功了」被判成「无法判定」。
         """
+        target = (account or "").strip().lower()
+        if not target:
+            return False
+
         info = self._parse_status_page(text)
         online_account = info.get("account")
-        if online_account:
-            return online_account.lower() == account.lower()
-        # 页面没有账号字段（部分门户只在 JS 变量里带账号）
-        m = re.search(r'(?:vloginid|loginid|userid)["\']?\s*[:=]\s*["\']?([^"\'&\s,]+)',
-                      text, re.I)
-        if m:
-            return m.group(1).lower() == account.lower()
-        # 完全没有账号信息时无法核验，保守地认为不匹配，交由上层提示
+        if online_account and online_account.strip().lower() == target:
+            return True
+
+        # 中文标签形式：当前登录账号：xxx / 账号：xxx / 用户名：xxx
+        m = re.search(r'(?:当前登录账号|登录账号|账号|用户名|帐号)'
+                      r'\s*[：:]\s*([^\s<，,；;]+)', text)
+        if m and m.group(1).strip().lower() == target:
+            return True
+
+        # JS 变量 / URL 参数形式
+        m2 = re.search(r'(?:vloginid|loginid|userid|loginname|account)'
+                       r'["\']?\s*[:=]\s*["\']?([^"\'&\s,<>]+)',
+                       text, re.I)
+        if m2 and m2.group(1).strip().strip('"\'').lower() == target:
+            return True
+
+        # 页面完全没有账号信息：无法核验。
+        # 注意返回 False 会让上层判为"无法判定"（而非密码错），
+        # 这是安全方向——宁可说不确定，也不能谎报成功或谎报密码错误。
         return False
 
     def _verify_after_login(self, account: str) -> str:
@@ -561,14 +581,24 @@ class PortalClient:
         return LoginStatus.PROTOCOL_ERROR
 
     def _classify_error(self, text: str) -> str:
-        """按错误关键词把页面文本映射成状态码。"""
+        """
+        按页面文本映射状态码。
+
+        ⚠️ 重要原则（2026-10-15）：**只有门户明确给出错误提示时**
+        才返回 BAD_CREDENTIAL；页面认不出来时返回 UNKNOWN_ERROR，
+        绝不臆断为密码错误——这会导致正确密码被拒。
+
+        旧实现里 `_has_login_form(text)` 曾直接判 BADCRED，
+        但登录页本身必然含 password 输入框（登录页=未登录成功），
+        用它判断会把「返回登录页」误当成「密码错」。
+        由于成功登录后也可能重定向回登录页，此判据已移除。
+        """
         for key, markers in self.cfg.error_markers.items():
             for marker in markers:
                 if marker in text:
                     return MARKER_TO_STATUS.get(key, LoginStatus.UNKNOWN_ERROR)
-        # 页面同时含登录框 → 说明又回到登录页，即未登录成功
-        if self._has_login_form(text):
-            return LoginStatus.BAD_CREDENTIAL
+
+        # 没有明确错误提示 → 无法判定（可能是登录页，也可能是改版后的新页面）
         return LoginStatus.UNKNOWN_ERROR
 
     # ------------------------------------------------------------------

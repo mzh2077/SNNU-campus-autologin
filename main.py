@@ -514,10 +514,11 @@ def show_result(status: str) -> None:
     elif status == LoginStatus.PROTOCOL_ERROR:
         fail("门户返回内容异常，可能门户已改版。")
         info("可尝试重新抓取门户页面以更新接口配置。")
-    else:
-        fail("登录未成功。")
-        info("可手动打开门户登录：")
-        info(f"  {config.portal().status_url}")
+    elif status == LoginStatus.UNKNOWN_ERROR:
+        fail("无法确认登录结果。")
+        info("门户没有返回明确的成功或失败信息，这不代表密码错误。")
+        info("常见原因：门户改版、响应页面变化、或连接不稳定。")
+        info("可在浏览器打开门户确认账号密码是否正确。")
 
 
 def auto_close(cfg, success: bool) -> None:
@@ -695,6 +696,15 @@ def verify_credentials(creds: config_store.Credentials, cfg,
                     return False
                 continue
 
+            # 无法判定密码对错（门户未给出明确结论）——绝不当成密码错
+            if status in (LoginStatus.UNKNOWN_ERROR, LoginStatus.PROTOCOL_ERROR):
+                warn("无法判断密码是否正确。")
+                info("门户没有返回明确的验证结果（可能是门户改版或响应异常），")
+                info("这不代表你的密码有误。")
+                if ask("仍要保存该账号密码吗？（1=保存  2=不保存）", "1").strip() not in ("1", "是", "y", "Y"):
+                    return False
+                return True
+
             # 断网等其他情况
             warn(LoginStatus.message(status))
             if ask("是否仍要保存该账号密码？（1=是  2=否，放弃）", "2").strip() not in ("1", "是", "y", "Y"):
@@ -744,6 +754,16 @@ def verify_credentials(creds: config_store.Credentials, cfg,
             fail("校园网不可达，无法验证密码。")
             info("请确认已连接到校园网后再试。")
             answer = ask("是否仍要保存该账号密码？(y=保存 / n=返回)", "n")
+            return answer.lower() in ("y", "yes", "是", "1")
+
+        # —— 无法判定 ——
+        # 门户没给出明确结论。这**不代表密码错误**，不能按密码错处理，
+        # 否则用户会看到「密码错误」的误导提示。
+        if status in (LoginStatus.UNKNOWN_ERROR, LoginStatus.PROTOCOL_ERROR):
+            warn("无法判断密码是否正确。")
+            info("门户没有返回明确的验证结果，这不代表你的密码有误。")
+            info("（可能是门户改版，或响应页面与预期不同）")
+            answer = ask("是否仍要保存该账号密码？(y=保存 / n=返回)", "y")
             return answer.lower() in ("y", "yes", "是", "1")
 
         # —— 超时 ——
