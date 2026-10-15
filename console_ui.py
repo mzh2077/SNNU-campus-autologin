@@ -72,26 +72,6 @@ def red(text: str) -> str:
     return f"{_RED}{text}{_RESET}" if init_color() else text
 
 
-def green(text: str) -> str:
-    return f"{_GREEN}{text}{_RESET}" if init_color() else text
-
-
-def yellow(text: str) -> str:
-    return f"{_YELLOW}{text}{_RESET}" if init_color() else text
-
-
-def cyan(text: str) -> str:
-    return f"{_CYAN}{text}{_RESET}" if init_color() else text
-
-
-def dim(text: str) -> str:
-    return f"{_DIM}{text}{_RESET}" if init_color() else text
-
-
-def supports_color() -> bool:
-    return init_color()
-
-
 # ---------------------------------------------------------------------------
 # Windows 原生颜色（备用方案）
 # ---------------------------------------------------------------------------
@@ -148,14 +128,5 @@ class WinColor:
             print(text)
             return
         cls.set_text(cls.RED)
-        print(text, flush=True)
-        cls.reset()
-
-    @classmethod
-    def print_green(cls, text: str) -> None:
-        if not cls._ensure():
-            print(text)
-            return
-        cls.set_text(cls.GREEN)
         print(text, flush=True)
         cls.reset()

@@ -154,11 +154,30 @@ def build() -> int:
 
     cmd += [
         "--hidden-import", "ctypes.wintypes",
+        # —— 以下模块本项目完全不用 ——
         "--exclude-module", "tkinter",
         "--exclude-module", "matplotlib",
         "--exclude-module", "numpy",
-        "--exclude-module", "PIL",     # 图标仅在打包期用，运行时无需 Pillow
-        # cryptography 及其 OpenSSL 依赖约 19 MB（占总体积 2/3），
+        "--exclude-module", "PIL",      # 图标仅在打包期用，运行时无需 Pillow
+        "--exclude-module", "pytest",
+        "--exclude-module", "pydoc",
+        "--exclude-module", "doctest",
+        "--exclude-module", "distutils",
+        "--exclude-module", "setuptools",
+        "--exclude-module", "pip",
+        "--exclude-module", "sqlite3",
+        "--exclude-module", "multiprocessing",
+        "--exclude-module", "asyncio",
+        "--exclude-module", "concurrent",
+        "--exclude-module", "xmlrpc",
+        "--exclude-module", "pdb",
+        "--exclude-module", "profile",
+        "--exclude-module", "cProfile",
+        "--exclude-module", "trace",
+        "--exclude-module", "lib2to3",
+        "--exclude-module", "turtledemo",
+        "--exclude-module", "test",
+        # cryptography 及其 OpenSSL 依赖约 19 MB（占原体积 2/3），
         # 但 config_store 的加密是 **DPAPI 优先、AES 兜底**：
         # Windows 上 DPAPI（ctypes 调 crypt32）必定可用，永远走不到 AES。
         # 因此排除它——仅在非 Windows 且无 DPAPI 时才会降级为不加密。
@@ -167,10 +186,7 @@ def build() -> int:
         # 注意：email / http 不能排除！
         # urllib.request 依赖 email 解析响应头，排除后 exe 启动即崩
         # （ModuleNotFoundError: No module named 'email'）
-        "--exclude-module", "unittest",
-        "--exclude-module", "pydoc",
-        "--exclude-module", "doctest",
-        "--exclude-module", "distutils",
+        # —— 这个坑踩过一次，务必保留。
         os.path.join(HERE, "main.py"),
     ]
     print("\n执行：", " ".join(cmd), "\n")

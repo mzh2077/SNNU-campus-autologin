@@ -10,7 +10,7 @@
 """
 
 import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 
 APP_NAME = "CampusAutoLogin"
 APP_VERSION = "2.0.0"
@@ -173,9 +173,6 @@ class PortalConfig:
         "退出登录", "退出", "我的状态", "当前登录", "已登录", "欢迎",
     ])
 
-    def to_dict(self) -> dict:
-        return asdict(self)
-
 
 # 全局单例：程序各处通过 `portal()` 获取
 _CONFIG = PortalConfig()
@@ -208,11 +205,3 @@ def load_overrides() -> None:
             continue
         if hasattr(_CONFIG, key):
             setattr(_CONFIG, key, value)
-
-
-def save_current() -> None:
-    """把当前内存中的配置写回 settings.json（用于「修改设置」功能）。"""
-    import json
-    os.makedirs(data_dir(), exist_ok=True)
-    with open(config_file(), "w", encoding="utf-8") as f:
-        json.dump(_CONFIG.to_dict(), f, ensure_ascii=False, indent=2)

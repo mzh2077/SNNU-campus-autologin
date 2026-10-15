@@ -371,12 +371,20 @@ class PortalClient:
         # 3) 无论结果如何都尝试恢复登录，避免把用户留在离线状态
         if result == LoginStatus.OK:
             self._log("verify_by_logout: 校验通过，已重新登录")
-        else:
-            self._log(f"verify_by_logout: 校验失败({result})，尝试恢复原账号登录")
-            try:
-                self.login(account, password)
-            except Exception:
-                pass
+            return result
+
+        self._log(f"verify_by_logout: 校验失败({result})，尝试恢复原账号登录")
+        # 恢复结果必须记录：若恢复也失败，用户就真的处于离线状态了，
+        # 而密码是错的（校验已明确失败），此时不该用错密码反复重试——
+        # 直接如实上报，让上层提示用户。
+        try:
+            back = self.login(account, password)
+            if LoginStatus.is_good(back):
+                self._log("verify_by_logout: 已用原账号重新登录，网络正常")
+            else:
+                self._log(f"verify_by_logout: 重新登录未成功({back})，当前处于离线状态")
+        except Exception as e:
+            self._log(f"verify_by_logout: 重新登录异常 {type(e).__name__}: {e}")
 
         return result
 
