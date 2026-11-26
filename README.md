@@ -1,12 +1,40 @@
 # SNNU 校园网自动登录
 
+> **本项目已归档，不再维护。**
+>
+> 请改用新版客户端：**[SNNUAutoLogin-GUI](https://github.com/mzh2077/SNNUAutoLogin-GUI)**
+>
+> 原生 WinUI 3 桌面客户端（Windows 11），有图形界面和安装包，
+> 功能更完整、体验更好，不需要装 Python。
+>
+> 这个仓库保留下来是为了留个记录，里面仍是可用的 Python 版本，
+> 但不建议再使用。
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D4.svg)]()
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-3776AB.svg)]()
 
 只适配陕西师范大学。其他学校需要改 `config.py`，见[移植到其他学校](#移植到其他学校)。
 
-## 下载
+## 新版客户端
+
+**[SNNUAutoLogin-GUI](https://github.com/mzh2077/SNNUAutoLogin-GUI)**
+
+C# + WinUI 3 写的原生 Windows 客户端，Windows 版支持 Win10 2004+ 和 Win11。
+比这个 Python 版本多了不少东西：
+
+- 图形界面，不用对着命令行操作
+- 附带安装包，双击安装，也能覆盖升级
+- 托盘后台常驻，关闭主窗口后继续在后台保活
+- 断线自动重连
+- 可按有线、任意 Wi-Fi 或指定 Wi-Fi 名称分别配置账号和运营商
+- 支持门户要求图形验证码的场景
+
+Linux 桌面版和命令行预览版也有。
+
+Releases 页下载 `SNNUAutoLogin-Setup-*.exe`。
+
+## 下载（本 Python 版）
 
 Releases 页下载 `校园网自动登录.exe`，不需要装 Python。
 
