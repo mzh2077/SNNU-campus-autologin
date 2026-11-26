@@ -36,9 +36,12 @@ Releases 页下载 `SNNUAutoLogin-Setup-*.exe`。
 
 ## 下载（本 Python 版）
 
-Releases 页下载 `校园网自动登录.exe`，不需要装 Python。
+Releases 页下载 `SNNU-Campus-AutoLogin.exe`，不需要装 Python。
 
 国内下载慢的话用网盘：<https://wwavz.lanzout.com/itbug4blcs7e>，密码 `am4z`
+
+> 校验文件 `SHA256SUMS.txt` 里记录的就是这个文件名。
+> GitHub 会把中文文件名降级成 `default.exe`，所以 Release 里用了英文名。
 
 ## 杀毒软件会误报
 
