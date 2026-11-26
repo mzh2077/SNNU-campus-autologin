@@ -11,8 +11,8 @@
 
 > **国内网络建议走网盘，下载更快、更不容易断**
 >
-> 蓝奏云：https://wwavz.lanzout.com/itbug4blcs7e
-> 访问密码：**`am4z`**
+> 蓝奏云：https://wwavz.lanzout.com/iQMyr4hcc2yh
+> 访问密码：**`76b9`**
 >
 > 下方 Assets 里的 exe 是同一版本（SHA-256 一致），
 > 如果 GitHub 下载慢或失败，就用上面的网盘。
